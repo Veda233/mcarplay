@@ -84,6 +84,7 @@ import com.mcarplay.app.shizuku.ShizukuGate
 import com.mcarplay.app.ui.ScreenDimmer
 import com.mcarplay.app.util.Bg
 import com.mcarplay.app.util.DebugFileLog
+import com.mcarplay.app.video.CarPlayTestPattern
 import com.mcarplay.app.video.ExternalVideoSource
 import com.mcarplay.app.video.VideoSender
 import java.text.SimpleDateFormat
@@ -4850,6 +4851,13 @@ object SessionController {
                                     )
                                     pendingVideoW = streamW
                                     pendingVideoH = streamH
+                                    val testPatternMode =
+                                        appContext
+                                            ?.getSharedPreferences("mcarplay_test", Context.MODE_PRIVATE)
+                                            ?.getBoolean("test_pattern", false) == true
+                                    if (testPatternMode) {
+                                        appendLog("TEST: 无 CarWith 实验模式：使用本地动态色条测试原厂无线 CarPlay")
+                                    }
                                     val carLifeSource =
                                         object : ExternalVideoSource {
                                             override fun requestKeyFrame(): Boolean = currentCarLifeSession?.requestKeyFrame() == true
@@ -4868,7 +4876,7 @@ object SessionController {
                                                 targetFps = fps,
                                                 log = { line -> appendLog(line) },
                                                 keepAliveWithStats = setup.keepAliveSendStatsAsBody,
-                                                externalVideoSource = carLifeSource,
+                                                externalVideoSource = if (testPatternMode) null else carLifeSource,
                                                 receiverMaxFps = setup.maxFps,
                                                 // 车机拿走主屏（原车界面、倒车影像等）时暂停屏幕视频，归还后从新的 IDR 恢复
                                                 phoneOwnsScreen = { client.modes.phoneOwnsScreen },
@@ -5053,11 +5061,40 @@ object SessionController {
                                     }
                                     return@run
                                 }
-                                ConnectionDiagnostics.timeline.stage(diagnosticAttempt, ConnectionStage.CARWITH)
+                                val testPatternActive =
+                                    appContext?.getSharedPreferences("mcarplay_test", Context.MODE_PRIVATE)
+                                        ?.getBoolean("test_pattern", false) == true
+                                if (!testPatternActive) {
+                                    ConnectionDiagnostics.timeline.stage(diagnosticAttempt, ConnectionStage.CARWITH)
+                                }
                                 if (host != null) {
                                     val videoW = pendingVideoW
                                     val videoH = pendingVideoH
                                     val output = CarLifeOutput(diagnosticAttempt, sessionVideoSender)
+                                    if (testPatternActive) {
+                                        val sender = sessionVideoSender
+                                        val videoStarted = sender.start { surface ->
+                                            CarPlayTestPattern.start(
+                                                surface = surface,
+                                                width = videoW,
+                                                height = videoH,
+                                                keepRunning = { sender.isRunning && videoSender === sender },
+                                                log = ::appendLog,
+                                            )
+                                        }
+                                        if (videoStarted) {
+                                            StreamingWifiLock.acquire(context)
+                                            streamingDiagnosticAttempt = diagnosticAttempt
+                                            appendLog("TEST: CarPlay RECORD 完成，本地 H.264 动态色条正在推送")
+                                        } else {
+                                            appendLog("TEST: 本地测试视频启动失败（检查 VIDEO 日志）")
+                                            ConnectionDiagnostics.timeline.finish(
+                                                diagnosticAttempt,
+                                                DiagnosticCode.VIDEO_CLOSED,
+                                                true,
+                                            )
+                                        }
+                                    } else {
                                     // 按接收端屏幕比例请求，减少缩放/黑边；CarWith 不采纳时以其返回为准
                                     val createdCarLife =
                                         newFormalCarLifeSession(
@@ -5100,6 +5137,7 @@ object SessionController {
                                         releaseCarLifeSession(createdCarLife)
                                     }
                                 }
+                                    }
                                 // 音频通道（可选）：SETUP type=100 → UDP RTP 推流。
                                 // 会话已激活（RECORD 完成）后再协商；失败不影响视频主链路。
                                 val audioStarted =
