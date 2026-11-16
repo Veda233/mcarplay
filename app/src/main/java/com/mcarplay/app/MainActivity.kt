@@ -871,6 +871,24 @@ class MainActivity : AppCompatActivity() {
         heroStats = findViewById(R.id.heroStats)
         heroProgress = findViewById(R.id.heroProgress)
         ctaButton = findViewById(R.id.ctaButton)
+        // Long-press the main connection button to switch the diagnostic source.
+        // Normal tap and all existing connection checks remain unchanged.
+        ctaButton.setOnLongClickListener {
+            if (SessionController.isSessionRunning() || SessionController.sessionStarting.get()) {
+                android.widget.Toast.makeText(this, "请先断开连接再切换测试模式", android.widget.Toast.LENGTH_LONG).show()
+            } else {
+                val prefs = getSharedPreferences("mcarplay_test", Context.MODE_PRIVATE)
+                val enabled = !prefs.getBoolean("test_pattern", false)
+                prefs.edit().putBoolean("test_pattern", enabled).apply()
+                android.widget.Toast.makeText(
+                    this,
+                    if (enabled) "无 CarWith 测试模式已开启：连接后显示动态色条" else "已关闭测试模式：恢复原生 CarWith 转发",
+                    android.widget.Toast.LENGTH_LONG,
+                ).show()
+                log("TEST: 无 CarWith 测试模式 ${if (enabled) "已开启" else "已关闭"}")
+            }
+            true
+        }
         ctaIcon = findViewById(R.id.ctaIcon)
         ctaLabel = findViewById(R.id.ctaLabel)
         audioTag = findViewById(R.id.audioTag)
